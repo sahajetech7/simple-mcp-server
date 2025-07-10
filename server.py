@@ -445,6 +445,497 @@ async def add_connectwise_contact(
         
     return await client.add_contact(msp_custom_domain, contact_data)
 
+# Add this import after your other client imports
+from app.clients.connectwise_sync_client import ConnectWiseSyncClient
+
+# ========== ConnectWise Sync Tools ==========
+
+@mcp.tool
+async def sync_connectwise_clients_contacts(msp_custom_domain: str) -> Dict[str, Any]:
+    """
+    Synchronize all clients and contacts from ConnectWise to local database.
+    This is a full sync operation that updates local data with ConnectWise data.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        
+    Returns:
+        Dictionary containing sync results or error information
+    """
+    client = ConnectWiseSyncClient()
+    return await client.sync_clients_contacts(msp_custom_domain)
+
+@mcp.tool
+async def sync_connectwise_board_tickets(
+    msp_custom_domain: str,
+    board_id: int,
+    board_name: str,
+    sync_from_date: str = None,
+    sync_statuses: List[str] = None
+) -> Dict[str, Any]:
+    """
+    Synchronize tickets for a specific ConnectWise board.
+    This syncs ticket data from ConnectWise to the local system.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        board_id: ID of the board to sync
+        board_name: Name of the board to sync
+        sync_from_date: Optional date to sync from (ISO format: YYYY-MM-DD)
+        sync_statuses: Optional list of ticket statuses to sync (e.g., ['Open', 'In Progress'])
+        
+    Returns:
+        Dictionary containing sync results or error information
+    """
+    client = ConnectWiseSyncClient()
+    
+    # Build board sync request
+    board_sync_request = {
+        "boardId": board_id,
+        "boardName": board_name
+    }
+    
+    if sync_from_date:
+        board_sync_request["syncFromDate"] = sync_from_date
+    
+    if sync_statuses:
+        board_sync_request["syncStatus"] = sync_statuses
+    
+    return await client.sync_board_tickets(msp_custom_domain, [board_sync_request])
+
+@mcp.tool
+async def sync_multiple_connectwise_boards(
+    msp_custom_domain: str,
+    board_configs: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """
+    Synchronize tickets for multiple ConnectWise boards at once.
+    Useful for bulk sync operations across different boards.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        board_configs: List of board configurations, each containing:
+            - board_id: ID of the board
+            - board_name: Name of the board
+            - sync_from_date: Optional date to sync from (ISO format)
+            - sync_statuses: Optional list of statuses to sync
+        
+    Returns:
+        Dictionary containing sync results or error information
+        
+    Example:
+        board_configs = [
+            {
+                "board_id": 1,
+                "board_name": "Service Board",
+                "sync_from_date": "2024-01-01",
+                "sync_statuses": ["Open", "In Progress"]
+            },
+            {
+                "board_id": 2,
+                "board_name": "Project Board"
+            }
+        ]
+    """
+    client = ConnectWiseSyncClient()
+    
+    # Transform the input format to match API expectations
+    board_sync_requests = []
+    for config in board_configs:
+        request = {
+            "boardId": config.get("board_id"),
+            "boardName": config.get("board_name")
+        }
+        
+        if "sync_from_date" in config:
+            request["syncFromDate"] = config["sync_from_date"]
+            
+        if "sync_statuses" in config:
+            request["syncStatus"] = config["sync_statuses"]
+            
+        board_sync_requests.append(request)
+    
+    return await client.sync_board_tickets(msp_custom_domain, board_sync_requests)
+
+@mcp.tool
+async def sync_all_connectwise_data(msp_custom_domain: str) -> Dict[str, Any]:
+    """
+    Perform a complete synchronization of all ConnectWise data.
+    This includes clients, contacts, and all available boards with tickets.
+    Note: This is a long-running operation.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        
+    Returns:
+        Dictionary containing comprehensive sync results
+    """
+    sync_results = {
+        "clients_contacts_sync": None,
+        "boards_sync": None,
+        "overall_success": True,
+        "errors": []
+    }
+    
+    # First, sync clients and contacts
+    sync_client = ConnectWiseSyncClient()
+    cw_client = ConnectWiseClient()  # Reuse existing client
+    
+    # Sync clients and contacts
+    clients_result = await sync_client.sync_clients_contacts(msp_custom_domain)
+    sync_results["clients_contacts_sync"] = clients_result
+    
+    if not clients_result.get("success"):
+        sync_results["overall_success"] = False
+        sync_results["errors"].append("Failed to sync clients and contacts")
+    
+    # Get all boards to sync
+    boards_result = await cw_client.get_boards(msp_custom_domain)
+    
+    if boards_result.get("success") and boards_result.get("boards"):
+        # Prepare board sync requests
+        board_configs = []
+        for board in boards_result["boards"]:
+            board_configs.append({
+                "board_id": board.get("id"),
+                "board_name": board.get("name")
+            })
+        
+        # Sync all boards
+        if board_configs:
+            boards_sync_result = await sync_multiple_connectwise_boards(
+                msp_custom_domain, 
+                board_configs
+            )
+            sync_results["boards_sync"] = boards_sync_result
+            
+            if not boards_sync_result.get("success"):
+                sync_results["overall_success"] = False
+                sync_results["errors"].append("Failed to sync some boards")
+    else:
+        sync_results["errors"].append("Could not retrieve boards for sync")
+        sync_results["overall_success"] = False
+    
+    return sync_results
+
+
+# Add this import after your other client imports
+from app.clients.connectwise_ticketing_client import ConnectWiseTicketingClient
+
+# ========== ConnectWise Ticketing Tools ==========
+
+@mcp.tool
+async def analyze_ticket_request(
+    msp_custom_domain: str,
+    user_id: str,
+    user_message: str
+) -> Dict[str, Any]:
+    """
+    Analyze a user's ticket request and suggest categorization using AI.
+    This tool helps determine the appropriate category, subcategory, priority, and other details.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        user_id: ID of the user submitting the request
+        user_message: The user's description of their issue
+        
+    Returns:
+        Dictionary containing AI-suggested categorization
+    """
+    client = ConnectWiseTicketingClient()
+    return await client.get_ticket_categorization(msp_custom_domain, user_id, user_message)
+
+@mcp.tool
+async def get_ticket_diagnostic_questions(
+    msp_custom_domain: str,
+    user_id: str,
+    user_message: str
+) -> Dict[str, Any]:
+    """
+    Get diagnostic questions to better understand a ticket request.
+    Returns follow-up questions that help clarify the issue.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        user_id: ID of the user submitting the request
+        user_message: The user's description of their issue
+        
+    Returns:
+        Dictionary containing diagnostic Q&A to clarify the issue
+    """
+    client = ConnectWiseTicketingClient()
+    return await client.get_ticket_diagnostic_qa(msp_custom_domain, user_id, user_message)
+
+@mcp.tool
+async def create_connectwise_ticket(
+    msp_custom_domain: str,
+    board_id: int,
+    summary: str,
+    description: str,
+    company_id: int,
+    contact_id: int = None,
+    priority_id: int = None,
+    status_id: int = None,
+    category_id: int = None,
+    subcategory_id: int = None,
+    user_id: str = None
+) -> Dict[str, Any]:
+    """
+    Create a new ticket in ConnectWise on a specific board.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        board_id: ID of the board to create ticket on
+        summary: Brief summary of the issue
+        description: Detailed description of the issue
+        company_id: ID of the company this ticket is for
+        contact_id: ID of the contact reporting the issue (optional)
+        priority_id: Priority ID for the ticket (optional)
+        status_id: Initial status ID (optional)
+        category_id: Category ID (optional)
+        subcategory_id: Subcategory ID (optional)
+        user_id: User ID creating the ticket (optional)
+        
+    Returns:
+        Dictionary containing created ticket information
+    """
+    client = ConnectWiseTicketingClient()
+    
+    ticket_details = {
+        "boardId": board_id,
+        "summary": summary,
+        "description": description,
+        "companyId": company_id
+    }
+    
+    if contact_id:
+        ticket_details["contactId"] = contact_id
+    if priority_id:
+        ticket_details["priorityId"] = priority_id
+    if status_id:
+        ticket_details["statusId"] = status_id
+    if category_id:
+        ticket_details["categoryId"] = category_id
+    if subcategory_id:
+        ticket_details["subcategoryId"] = subcategory_id
+    
+    return await client.create_board_ticket(msp_custom_domain, ticket_details, user_id)
+
+@mcp.tool
+async def update_connectwise_ticket(
+    msp_custom_domain: str,
+    ticket_id: str,
+    summary: str,
+    description: str,
+    priority_id: int,
+    status_id: int,
+    category_id: int,
+    subcategory_id: int
+) -> Dict[str, Any]:
+    """
+    Update an existing ConnectWise ticket.
+    Only provide the fields you want to update.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        ticket_id: ID of the ticket to update
+        summary: New summary (optional)
+        description: New description (optional)
+        priority_id: New priority ID (optional)
+        status_id: New status ID (optional)
+        category_id: New category ID (optional)
+        subcategory_id: New subcategory ID (optional)
+        
+    Returns:
+        Dictionary containing updated ticket information
+    """
+    client = ConnectWiseTicketingClient()
+    
+    ticket_details = {}
+    if summary:
+        ticket_details["summary"] = summary
+    if description:
+        ticket_details["description"] = description
+    if priority_id:
+        ticket_details["priorityId"] = priority_id
+    if status_id:
+        ticket_details["statusId"] = status_id
+    if category_id:
+        ticket_details["categoryId"] = category_id
+    if subcategory_id:
+        ticket_details["subcategoryId"] = subcategory_id
+    
+    return await client.update_ticket(msp_custom_domain, ticket_id, ticket_details)
+
+
+@mcp.tool
+async def get_connectwise_ticket(
+    msp_custom_domain: str,
+    ticket_id: str
+) -> Dict[str, Any]:
+    """
+    Get detailed information about a specific ConnectWise ticket.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        ticket_id: ID of the ticket to retrieve
+        
+    Returns:
+        Dictionary containing ticket details
+    """
+    client = ConnectWiseTicketingClient()
+    return await client.get_ticket_by_id(msp_custom_domain, ticket_id)
+
+@mcp.tool
+async def get_connectwise_ticket_notes(
+    msp_custom_domain: str,
+    ticket_id: str,
+    detailed: bool = True
+) -> Dict[str, Any]:
+    """
+    Get all notes for a ConnectWise ticket.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        ticket_id: ID of the ticket
+        detailed: If True, returns detailed note objects; if False, returns simple text
+        
+    Returns:
+        Dictionary containing ticket notes
+    """
+    client = ConnectWiseTicketingClient()
+    return await client.get_ticket_notes(msp_custom_domain, ticket_id, detailed)
+
+@mcp.tool
+async def add_note_to_connectwise_ticket(
+    msp_custom_domain: str,
+    ticket_id: int,
+    note_text: str,
+    note_type: str = "general",
+    is_internal: bool = False,
+    is_resolution: bool = False
+) -> Dict[str, Any]:
+    """
+    Add a note to an existing ConnectWise ticket.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        ticket_id: ID of the ticket
+        note_text: The note content to add
+        note_type: Type of note - 'general', 'detail', or 'analysis'
+        is_internal: Whether this is an internal note
+        is_resolution: Whether this note represents the resolution
+        
+    Returns:
+        Dictionary containing the created note
+    """
+    client = ConnectWiseTicketingClient()
+    
+    # Map note type to flags
+    detail_description = note_type == "detail"
+    internal_analysis = note_type == "analysis" or is_internal
+    
+    return await client.add_note_to_ticket(
+        msp_custom_domain,
+        ticket_id,
+        f"Note added via MCP - Type: {note_type}",
+        note_text,
+        detail_description,
+        internal_analysis,
+        is_resolution
+    )
+
+@mcp.tool
+async def complete_connectwise_ticket(
+    msp_custom_domain: str,
+    ticket_id: str,
+    board_id: int,
+    technician_id: str,
+    completion_notes: str,
+    final_status: str 
+) -> Dict[str, Any]:
+    """
+    Mark a ConnectWise ticket as complete and update queue status.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        ticket_id: ID of the ticket to complete
+        board_id: ID of the board the ticket is on
+        technician_id: ID of the technician completing the ticket
+        completion_notes: Optional notes about the completion
+        final_status: Final status to set (default: "Completed")
+        
+    Returns:
+        Dictionary indicating success or failure
+    """
+    client = ConnectWiseTicketingClient()
+    return await client.complete_ticket(
+        msp_custom_domain,
+        ticket_id,
+        board_id,
+        technician_id,
+        completion_notes,
+        final_status
+    )
+
+@mcp.tool
+async def create_smart_ticket(
+    msp_custom_domain: str,
+    user_id: str,
+    issue_description: str,
+    company_id: int,
+    contact_id: int 
+) -> Dict[str, Any]:
+    """
+    Create a ticket with AI-powered categorization.
+    This tool analyzes the issue description and automatically suggests appropriate categorization.
+    
+    Args:
+        msp_custom_domain: The MSP custom domain (e.g., 'etech7')
+        user_id: ID of the user creating the ticket
+        issue_description: Natural language description of the issue
+        company_id: ID of the company this ticket is for
+        contact_id: ID of the contact (optional)
+        
+    Returns:
+        Dictionary containing the created ticket with AI categorization
+    """
+    client = ConnectWiseTicketingClient()
+    
+    # First, get AI categorization
+    categorization_result = await client.get_ticket_board_categorization(
+        msp_custom_domain, user_id, issue_description
+    )
+    
+    if not categorization_result.get("success"):
+        return categorization_result
+    
+    board_cat = categorization_result["board_categorization"]
+    
+    # Build ticket details from AI suggestions
+    ticket_details = {
+        "boardId": board_cat.get("boardId"),
+        "summary": board_cat.get("summary", issue_description[:100]),
+        "description": issue_description,
+        "companyId": company_id
+    }
+    
+    if contact_id:
+        ticket_details["contactId"] = contact_id
+    
+    # Add AI-suggested categorization if available
+    if board_cat.get("categoryId"):
+        ticket_details["categoryId"] = board_cat["categoryId"]
+    if board_cat.get("subcategoryId"):
+        ticket_details["subcategoryId"] = board_cat["subcategoryId"]
+    if board_cat.get("priorityId"):
+        ticket_details["priorityId"] = board_cat["priorityId"]
+    if board_cat.get("statusId"):
+        ticket_details["statusId"] = board_cat["statusId"]
+    
+    # Create the ticket
+    return await client.create_board_ticket(msp_custom_domain, ticket_details, user_id)
+
 # Run the server
 if __name__ == "__main__":
     mcp.run()

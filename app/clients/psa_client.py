@@ -5,7 +5,7 @@ from typing import List, Dict
 class PSAClient:
     def __init__(self):
         self.use_mock = os.getenv("USE_MOCK_DATA", "false").lower() == "true"
-        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:8080")
+        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:9030")
         self.timeout = httpx.Timeout(30.0)
         
     async def get_tickets_by_domain(self, domain: str) -> List[Dict]:

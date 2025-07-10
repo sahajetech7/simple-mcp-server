@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 
 class ConnectWiseClient:
     def __init__(self):
-        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:8080")
+        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:9030")
         self.timeout = httpx.Timeout(30.0)
         
     # Board Management

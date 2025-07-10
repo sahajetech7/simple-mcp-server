@@ -6,7 +6,7 @@ import json
 class WeaviateClient:
     def __init__(self):
         # Get base URL from environment or use default
-        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:8080")
+        self.base_url = os.getenv("PSA_SERVICE_URL", "http://localhost:9030")
         self.weaviate_endpoint = f"{self.base_url}/weaviate/test"
         self.timeout = httpx.Timeout(30.0)
         
